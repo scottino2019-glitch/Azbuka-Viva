@@ -1,0 +1,6 @@
+{
+  "name": "Azbuka Viva",
+  "description": "Lezioni interattive sull'alfabeto russo insegnate come da una maestra vera, con voce di sistema, regole fonetiche, tutte le eccezioni e illustrazioni visive.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
