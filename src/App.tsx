@@ -6,6 +6,7 @@ import { TeacherLessonStage } from './components/TeacherLessonStage';
 import { AlphabetPosterGrid } from './components/AlphabetPosterGrid';
 import { ExceptionsCompendium } from './components/ExceptionsCompendium';
 import { ListeningGame } from './components/ListeningGame';
+import { VoiceSettingsModal } from './components/VoiceSettingsModal';
 import {
   getAvailableSystemVoices,
   isSpeechSupported,
@@ -19,8 +20,29 @@ type RailFilter = 'all' | 'vowel' | 'consonant' | 'sign' | 'false-friend';
 
 const STORAGE_LEARNED_KEY = 'azbuka_viva_learned_v1';
 const STORAGE_INDEX_KEY = 'azbuka_viva_active_index_v1';
+const STORAGE_VOICE_PREFS_KEY = 'azbuka_viva_voice_prefs_v1';
+
+interface SavedVoicePrefs {
+  forceRussianVoice: boolean;
+  selectedRuVoiceURI: string;
+  selectedItVoiceURI: string;
+  speechRate: number;
+  speechPitch: number;
+}
+
+const loadVoicePrefs = (): Partial<SavedVoicePrefs> => {
+  try {
+    const raw = localStorage.getItem(STORAGE_VOICE_PREFS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // Ignore
+  }
+  return {};
+};
 
 export default function App() {
+  const savedPrefs = loadVoicePrefs();
+
   const [activeSection, setActiveSection] = useState<AppSection>('lesson');
   const [selectedIndex, setSelectedIndex] = useState<number>(() => {
     try {
@@ -52,17 +74,31 @@ export default function App() {
 
   const [railFilter, setRailFilter] = useState<RailFilter>('all');
   const [slowMode, setSlowMode] = useState<boolean>(false);
-  const [forceRussianVoice, setForceRussianVoice] = useState<boolean>(true);
+  const [forceRussianVoice, setForceRussianVoice] = useState<boolean>(
+    savedPrefs.forceRussianVoice ?? true
+  );
+  const [speechRate, setSpeechRate] = useState<number>(
+    savedPrefs.speechRate ?? 0.92
+  );
+  const [speechPitch, setSpeechPitch] = useState<number>(
+    savedPrefs.speechPitch ?? 1.0
+  );
+
   const [activeSpeechId, setActiveSpeechId] = useState<string | null>(null);
   const [isSequencePlaying, setIsSequencePlaying] = useState<boolean>(false);
-  const [showVoicePanel, setShowVoicePanel] = useState<boolean>(false);
+  const [showVoiceModal, setShowVoiceModal] = useState<boolean>(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [speechNotice, setSpeechNotice] = useState<string | null>(null);
 
   const [ruVoices, setRuVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [itVoices, setItVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedRuVoiceURI, setSelectedRuVoiceURI] = useState<string>('');
-  const [selectedItVoiceURI, setSelectedItVoiceURI] = useState<string>('');
+  const [allVoices, setAllVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedRuVoiceURI, setSelectedRuVoiceURI] = useState<string>(
+    savedPrefs.selectedRuVoiceURI ?? ''
+  );
+  const [selectedItVoiceURI, setSelectedItVoiceURI] = useState<string>(
+    savedPrefs.selectedItVoiceURI ?? ''
+  );
   const [voicesLoaded, setVoicesLoaded] = useState<boolean>(false);
 
   const currentLetter = RUSSIAN_ALPHABET[selectedIndex] ?? RUSSIAN_ALPHABET[0];
@@ -84,37 +120,82 @@ export default function App() {
   }, [learnedLetters]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_VOICE_PREFS_KEY,
+        JSON.stringify({
+          forceRussianVoice,
+          selectedRuVoiceURI,
+          selectedItVoiceURI,
+          speechRate,
+          speechPitch,
+        })
+      );
+    } catch {
+      // Ignore
+    }
+  }, [
+    forceRussianVoice,
+    selectedRuVoiceURI,
+    selectedItVoiceURI,
+    speechRate,
+    speechPitch,
+  ]);
+
+  const refreshSystemVoices = useCallback(() => {
+    if (!isSpeechSupported()) return;
+    const { ruVoices: rvs, itVoices: ivs, allVoices: avs } =
+      getAvailableSystemVoices();
+
+    setRuVoices(rvs);
+    setItVoices(ivs);
+    setAllVoices(avs);
+    setVoicesLoaded(true);
+
+    setSelectedRuVoiceURI((prev) => {
+      const matchInAll = (v: SpeechSynthesisVoice) =>
+        (v.voiceURI || v.name) === prev;
+      if (prev && avs.some(matchInAll)) return prev;
+      const localRu = rvs.find((v) => v.localService);
+      const firstRu = localRu ?? rvs[0] ?? avs[0];
+      return firstRu ? firstRu.voiceURI || firstRu.name : '';
+    });
+
+    setSelectedItVoiceURI((prev) => {
+      const matchInAll = (v: SpeechSynthesisVoice) =>
+        (v.voiceURI || v.name) === prev;
+      if (prev && avs.some(matchInAll)) return prev;
+      const localIt = ivs.find((v) => v.localService);
+      const firstIt = localIt ?? ivs[0] ?? avs[0];
+      return firstIt ? firstIt.voiceURI || firstIt.name : '';
+    });
+  }, []);
+
+  const handleCloseVoiceModal = useCallback(() => {
+    setShowVoiceModal(false);
+  }, []);
+
+  useEffect(() => {
     if (!isSpeechSupported()) return;
 
-    const loadVoices = () => {
-      const { ruVoices: rvs, itVoices: ivs } = getAvailableSystemVoices();
-      setRuVoices(rvs);
-      setItVoices(ivs);
-      setVoicesLoaded(true);
+    refreshSystemVoices();
+    window.speechSynthesis.onvoiceschanged = refreshSystemVoices;
 
-      setSelectedRuVoiceURI((prev) => {
-        if (prev && rvs.some((v) => v.voiceURI === prev)) return prev;
-        const local = rvs.find((v) => v.localService);
-        return (local ?? rvs[0])?.voiceURI ?? '';
-      });
-
-      setSelectedItVoiceURI((prev) => {
-        if (prev && ivs.some((v) => v.voiceURI === prev)) return prev;
-        const local = ivs.find((v) => v.localService);
-        return (local ?? ivs[0])?.voiceURI ?? '';
-      });
-    };
-
-    loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
+    // Fallback polling for browsers that populate getVoices() asynchronously without firing onvoiceschanged
+    const t1 = window.setTimeout(refreshSystemVoices, 250);
+    const t2 = window.setTimeout(refreshSystemVoices, 900);
+    const t3 = window.setTimeout(refreshSystemVoices, 2200);
 
     return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(t3);
       stopAllSpeech();
       if (window.speechSynthesis) {
         window.speechSynthesis.onvoiceschanged = null;
       }
     };
-  }, []);
+  }, [refreshSystemVoices]);
 
   const handleStopSpeech = useCallback(() => {
     stopAllSpeech();
@@ -132,12 +213,14 @@ export default function App() {
       }
       setSpeechNotice(null);
       setIsSequencePlaying(false);
-      const rate = overrideRate ?? (slowMode ? 0.68 : 0.92);
+      const effectiveRate =
+        overrideRate ?? (slowMode ? Math.max(0.55, speechRate - 0.22) : speechRate);
 
       speakSingle({
         lang: 'ru-RU',
         text,
-        rate,
+        rate: effectiveRate,
+        pitch: speechPitch,
         voiceURI: selectedRuVoiceURI,
         ruVoiceURI: selectedRuVoiceURI,
         forceRussianVoice: true,
@@ -146,12 +229,12 @@ export default function App() {
         onError: () => {
           setActiveSpeechId(null);
           setSpeechNotice(
-            'Audio non disponibile su questo dispositivo: verifica che la sintesi vocale russa (ru-RU) sia attiva nelle impostazioni del sistema.'
+            'Audio non disponibile su questo dispositivo: apri "Imposta voci di sistema" per scegliere un\'altra voce.'
           );
         },
       });
     },
-    [slowMode, selectedRuVoiceURI]
+    [slowMode, speechRate, speechPitch, selectedRuVoiceURI]
   );
 
   const handleSpeakItalian = useCallback(
@@ -164,11 +247,15 @@ export default function App() {
       }
       setSpeechNotice(null);
       setIsSequencePlaying(false);
+      const effectiveRate = slowMode
+        ? Math.max(0.62, speechRate - 0.16)
+        : speechRate;
 
       speakSingle({
         lang: 'it-IT',
         text,
-        rate: slowMode ? 0.78 : 0.95,
+        rate: effectiveRate,
+        pitch: speechPitch,
         voiceURI: forceRussianVoice ? selectedRuVoiceURI : selectedItVoiceURI,
         ruVoiceURI: selectedRuVoiceURI,
         forceRussianVoice,
@@ -177,8 +264,27 @@ export default function App() {
         onError: () => setActiveSpeechId(null),
       });
     },
-    [slowMode, forceRussianVoice, selectedRuVoiceURI, selectedItVoiceURI]
+    [
+      slowMode,
+      speechRate,
+      speechPitch,
+      forceRussianVoice,
+      selectedRuVoiceURI,
+      selectedItVoiceURI,
+    ]
   );
+
+  const handleTestVoiceFromModal = useCallback(() => {
+    const sampleText = forceRussianVoice
+      ? 'Ciao! Sono la tua maestra russa. Ascolta questa parola: Арбуз, молоко, ёжик!'
+      : 'Ciao! Ecco la spiegazione in italiano. Ora ascolta in russo: Арбуз!';
+
+    if (forceRussianVoice) {
+      handleSpeakRussian(sampleText, 'voice-test', speechRate);
+    } else {
+      handleSpeakItalian(sampleText, 'voice-test');
+    }
+  }, [forceRussianVoice, speechRate, handleSpeakRussian, handleSpeakItalian]);
 
   const handlePlayFullLesson = useCallback(
     (letter: RussianLetter) => {
@@ -190,6 +296,13 @@ export default function App() {
       }
       setSpeechNotice(null);
       setIsSequencePlaying(true);
+
+      const ruEffective = slowMode
+        ? Math.max(0.55, speechRate - 0.22)
+        : speechRate;
+      const itEffective = slowMode
+        ? Math.max(0.62, speechRate - 0.16)
+        : speechRate;
 
       const steps: SequenceStep[] = [
         {
@@ -226,8 +339,9 @@ export default function App() {
 
       playTeacherSequence({
         steps,
-        ruRate: slowMode ? 0.68 : 0.9,
-        itRate: slowMode ? 0.78 : 0.94,
+        ruRate: ruEffective,
+        itRate: itEffective,
+        pitch: speechPitch,
         ruVoiceURI: selectedRuVoiceURI,
         itVoiceURI: selectedItVoiceURI,
         forceRussianVoice,
@@ -238,7 +352,14 @@ export default function App() {
         },
       });
     },
-    [slowMode, forceRussianVoice, selectedRuVoiceURI, selectedItVoiceURI]
+    [
+      slowMode,
+      speechRate,
+      speechPitch,
+      forceRussianVoice,
+      selectedRuVoiceURI,
+      selectedItVoiceURI,
+    ]
   );
 
   const toggleLearned = (uppercase: string) => {
@@ -402,7 +523,7 @@ export default function App() {
         {/* SEZIONE 1: LAVAGNA DELLA MAESTRA */}
         {activeSection === 'lesson' && (
           <div className="space-y-6">
-            {/* Hero compatto ad alto contrasto (Lavagna Verde Scura + Illustrazione Aula) */}
+            {/* Hero compatto ad alto contrasto */}
             <section className="bg-[#16332B] text-white border-2 border-[#9C6F44] rounded-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-12 items-stretch shadow-sm">
               <div className="lg:col-span-7 p-6 sm:p-7 flex flex-col justify-between gap-4">
                 <div>
@@ -448,7 +569,10 @@ export default function App() {
 
                   <button
                     type="button"
-                    onClick={() => setShowVoicePanel((v) => !v)}
+                    onClick={() => {
+                      refreshSystemVoices();
+                      setShowVoiceModal(true);
+                    }}
                     className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold bg-[#214B3F] border border-[#346C5C] text-white hover:bg-[#2A5E4F] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     <Settings2 className="w-4 h-4" />
@@ -467,120 +591,8 @@ export default function App() {
               </div>
             </section>
 
-            {/* Pannello per scegliere la modalità voce di sistema */}
-            {showVoicePanel && (
-              <section className="bg-white border-2 border-[#172554] rounded-2xl p-5 shadow-xs">
-                <div className="flex items-center justify-between gap-4 mb-4">
-                  <h2 className="font-display text-base font-bold text-[#1C1917]">
-                    Impostazioni Voce di Sistema (senza AI)
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={() => setShowVoicePanel(false)}
-                    className="text-xs font-bold text-[#1D4ED8] hover:underline cursor-pointer"
-                  >
-                    Chiudi
-                  </button>
-                </div>
-
-                {!isSpeechSupported() ? (
-                  <p className="text-sm text-[#DC2626]">
-                    Questo browser non espone l'API vocale di sistema. Prova Chrome, Edge o Safari aggiornati.
-                  </p>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setForceRussianVoice(true)}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
-                          forceRussianVoice
-                            ? 'bg-[#16332B] border-[#16332B] text-white'
-                            : 'bg-[#F7F3EA] border-[#C9BFA9] text-[#292524]'
-                        }`}
-                      >
-                        Maestra Russa (voce ru-RU per tutto, con accento russo)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setForceRussianVoice(false)}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
-                          !forceRussianVoice
-                            ? 'bg-[#172554] border-[#172554] text-white'
-                            : 'bg-[#F7F3EA] border-[#C9BFA9] text-[#292524]'
-                        }`}
-                      >
-                        Voci separate (it-IT per spiegazioni, ru-RU per russo)
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label
-                          htmlFor="ru-voice-select"
-                          className="block text-xs font-bold text-[#44403C] mb-1.5"
-                        >
-                          Voce Russa Principale (ru-RU)
-                        </label>
-                        {ruVoices.length > 0 ? (
-                          <select
-                            id="ru-voice-select"
-                            value={selectedRuVoiceURI}
-                            onChange={(e) => setSelectedRuVoiceURI(e.target.value)}
-                            className="w-full rounded-lg border border-[#C9BFA9] bg-[#F7F3EA] px-3 py-2 text-sm text-[#1C1917]"
-                          >
-                            {ruVoices.map((v) => (
-                              <option key={v.voiceURI} value={v.voiceURI}>
-                                {v.name} ({v.lang})
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <p className="text-xs text-[#78350F] bg-[#FEF3C7] border border-[#D97706] rounded-lg p-2.5">
-                            {voicesLoaded
-                              ? 'Nessuna voce ru-RU dedicata trovata sul sistema: il browser proverà comunque a sintetizzare in ru-RU. Per risultati ottimali, aggiungi la voce Russa nelle impostazioni del tuo sistema operativo.'
-                              : 'Caricamento voci di sistema...'}
-                          </p>
-                        )}
-                      </div>
-
-                      {!forceRussianVoice && (
-                        <div>
-                          <label
-                            htmlFor="it-voice-select"
-                            className="block text-xs font-bold text-[#44403C] mb-1.5"
-                          >
-                            Voce Italiana (it-IT)
-                          </label>
-                          {itVoices.length > 0 ? (
-                            <select
-                              id="it-voice-select"
-                              value={selectedItVoiceURI}
-                              onChange={(e) => setSelectedItVoiceURI(e.target.value)}
-                              className="w-full rounded-lg border border-[#C9BFA9] bg-[#F7F3EA] px-3 py-2 text-sm text-[#1C1917]"
-                            >
-                              {itVoices.map((v) => (
-                                <option key={v.voiceURI} value={v.voiceURI}>
-                                  {v.name} ({v.lang})
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <p className="text-xs text-[#57534E] bg-[#F7F3EA] border border-[#C9BFA9] rounded-lg p-2.5">
-                              Verrà usata la voce predefinita del sistema per l'italiano.
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </section>
-            )}
-
             {/* Layout a Due Zone (Sinistra: Indice Blu Notte 33 Lettere | Destra: Lezione) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* Colonna Sinistra: Sillabario 33 Lettere */}
               <aside className="lg:col-span-4 bg-[#F7F3EA] border-2 border-[#C9BFA9] rounded-2xl overflow-hidden lg:sticky lg:top-6 shadow-xs">
                 <div className="bg-[#172554] text-white px-5 py-3.5 flex items-center justify-between gap-2">
                   <h2 className="font-display text-base font-bold">
@@ -673,7 +685,6 @@ export default function App() {
                 </div>
               </aside>
 
-              {/* Colonna Destra: Lavagna della Lezione */}
               <div className="lg:col-span-8">
                 <TeacherLessonStage
                   letter={currentLetter}
@@ -732,6 +743,27 @@ export default function App() {
           />
         )}
       </main>
+
+      <VoiceSettingsModal
+        isOpen={showVoiceModal}
+        onClose={handleCloseVoiceModal}
+        forceRussianVoice={forceRussianVoice}
+        onChangeForceRussianVoice={setForceRussianVoice}
+        ruVoices={ruVoices}
+        itVoices={itVoices}
+        allVoices={allVoices}
+        selectedRuVoiceURI={selectedRuVoiceURI}
+        onChangeRuVoiceURI={setSelectedRuVoiceURI}
+        selectedItVoiceURI={selectedItVoiceURI}
+        onChangeItVoiceURI={setSelectedItVoiceURI}
+        speechRate={speechRate}
+        onChangeSpeechRate={setSpeechRate}
+        speechPitch={speechPitch}
+        onChangeSpeechPitch={setSpeechPitch}
+        voicesLoaded={voicesLoaded}
+        onRefreshVoices={refreshSystemVoices}
+        onTestVoice={handleTestVoiceFromModal}
+      />
 
       <footer className="border-t-2 border-[#9C6F44] bg-[#122923] text-[#D6D3D1] py-5 px-4 sm:px-6 mt-8">
         <div className="max-w-[1320px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs">

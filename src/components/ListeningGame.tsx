@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Volume2, RotateCcw, Award, CheckCircle2, XCircle, ArrowRight } from 'lucide-react';
 import { RussianLetter } from '../types/alphabet';
 import { LetterIllustration } from './LetterIllustration';
@@ -164,7 +164,10 @@ export const ListeningGame: React.FC<ListeningGameProps> = ({
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
 
-  const playableLetters = letters.filter((l) => l.category !== 'sign');
+  const playableLetters = useMemo(
+    () => letters.filter((l) => l.category !== 'sign'),
+    [letters]
+  );
 
   const generateLetterRound = useCallback(
     (autoSpeak = false) => {

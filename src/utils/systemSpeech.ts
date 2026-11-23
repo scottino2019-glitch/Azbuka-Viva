@@ -1,6 +1,7 @@
 export interface SystemVoiceInfo {
   ruVoices: SpeechSynthesisVoice[];
   itVoices: SpeechSynthesisVoice[];
+  allVoices: SpeechSynthesisVoice[];
   selectedRuVoiceURI: string;
   selectedItVoiceURI: string;
   supported: boolean;
@@ -22,25 +23,39 @@ export function isSpeechSupported(): boolean {
 export function getAvailableSystemVoices(): {
   ruVoices: SpeechSynthesisVoice[];
   itVoices: SpeechSynthesisVoice[];
+  allVoices: SpeechSynthesisVoice[];
 } {
   if (!isSpeechSupported()) {
-    return { ruVoices: [], itVoices: [] };
+    return { ruVoices: [], itVoices: [], allVoices: [] };
   }
-  const all = window.speechSynthesis.getVoices();
-  const ruVoices = all.filter((v) => v.lang.toLowerCase().startsWith('ru'));
-  const itVoices = all.filter((v) => v.lang.toLowerCase().startsWith('it'));
-  return { ruVoices, itVoices };
+  const allVoices = window.speechSynthesis.getVoices();
+  const ruVoices = allVoices.filter((v) =>
+    v.lang.toLowerCase().replace('_', '-').startsWith('ru')
+  );
+  const itVoices = allVoices.filter((v) =>
+    v.lang.toLowerCase().replace('_', '-').startsWith('it')
+  );
+  return { ruVoices, itVoices, allVoices };
 }
 
 export function pickBestVoice(
   voices: SpeechSynthesisVoice[],
-  preferredURI?: string
+  preferredId?: string,
+  fallbackPool?: SpeechSynthesisVoice[]
 ): SpeechSynthesisVoice | null {
-  if (voices.length === 0) return null;
-  if (preferredURI) {
-    const exact = voices.find((v) => v.voiceURI === preferredURI);
-    if (exact) return exact;
+  if (preferredId) {
+    const inPrimary = voices.find(
+      (v) => v.voiceURI === preferredId || v.name === preferredId
+    );
+    if (inPrimary) return inPrimary;
+    if (fallbackPool) {
+      const inFallback = fallbackPool.find(
+        (v) => v.voiceURI === preferredId || v.name === preferredId
+      );
+      if (inFallback) return inFallback;
+    }
   }
+  if (voices.length === 0) return null;
   const local = voices.find((v) => v.localService);
   return local ?? voices[0];
 }
@@ -63,6 +78,7 @@ export interface SpeakOptions {
   lang: 'it-IT' | 'ru-RU';
   text: string;
   rate?: number;
+  pitch?: number;
   voiceURI?: string;
   forceRussianVoice?: boolean;
   ruVoiceURI?: string;
@@ -75,6 +91,7 @@ export function speakSingle({
   lang,
   text,
   rate = 0.92,
+  pitch = 1.0,
   voiceURI,
   forceRussianVoice = true,
   ruVoiceURI,
@@ -90,14 +107,14 @@ export function speakSingle({
   stopAllSpeech();
   const token = activeSequenceToken;
 
-  const { ruVoices, itVoices } = getAvailableSystemVoices();
+  const { ruVoices, itVoices, allVoices } = getAvailableSystemVoices();
   const useRussianEngine = lang === 'ru-RU' || forceRussianVoice;
 
   const cleanText = stripStressMarks(text);
   const utterance = new SpeechSynthesisUtterance(cleanText);
 
   if (useRussianEngine) {
-    const chosenRu = pickBestVoice(ruVoices, ruVoiceURI || voiceURI);
+    const chosenRu = pickBestVoice(ruVoices, ruVoiceURI || voiceURI, allVoices);
     if (chosenRu) {
       utterance.voice = chosenRu;
       utterance.lang = chosenRu.lang;
@@ -105,7 +122,7 @@ export function speakSingle({
       utterance.lang = 'ru-RU';
     }
   } else {
-    const chosenIt = pickBestVoice(itVoices, voiceURI);
+    const chosenIt = pickBestVoice(itVoices, voiceURI, allVoices);
     if (chosenIt) {
       utterance.voice = chosenIt;
       utterance.lang = chosenIt.lang;
@@ -115,7 +132,7 @@ export function speakSingle({
   }
 
   utterance.rate = rate;
-  utterance.pitch = 1.0;
+  utterance.pitch = pitch;
 
   let settled = false;
   const finish = () => {
@@ -146,6 +163,7 @@ export interface PlaySequenceOptions {
   steps: SequenceStep[];
   ruRate: number;
   itRate: number;
+  pitch?: number;
   ruVoiceURI?: string;
   itVoiceURI?: string;
   forceRussianVoice?: boolean;
@@ -157,6 +175,7 @@ export function playTeacherSequence({
   steps,
   ruRate,
   itRate,
+  pitch = 1.0,
   ruVoiceURI,
   itVoiceURI,
   forceRussianVoice = true,
@@ -171,9 +190,9 @@ export function playTeacherSequence({
 
   stopAllSpeech();
   const token = activeSequenceToken;
-  const { ruVoices, itVoices } = getAvailableSystemVoices();
-  const ruVoice = pickBestVoice(ruVoices, ruVoiceURI);
-  const itVoice = pickBestVoice(itVoices, itVoiceURI);
+  const { ruVoices, itVoices, allVoices } = getAvailableSystemVoices();
+  const ruVoice = pickBestVoice(ruVoices, ruVoiceURI, allVoices);
+  const itVoice = pickBestVoice(itVoices, itVoiceURI, allVoices);
 
   const runIndex = (idx: number) => {
     if (token !== activeSequenceToken) return;
@@ -208,7 +227,7 @@ export function playTeacherSequence({
       utterance.rate = itRate;
     }
 
-    utterance.pitch = 1.0;
+    utterance.pitch = pitch;
 
     const advance = () => {
       if (token !== activeSequenceToken) return;
